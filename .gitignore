@@ -1,0 +1,31 @@
+# Claude-specific - should not be committed
+.claude/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+logs/
+tmp/
+
+# API keys and secrets - be careful with delegation tools
+.env
+.env.local
+**/secrets.json
+config/secrets.json
+
+# Python cache (for quota tracker and usage logger tools)
+__pycache__/
+*.py[cod]
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Editor backups
+*.swp
+*.swo
+*~
+
+# Local configuration overrides
+config/local.json

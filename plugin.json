@@ -1,0 +1,22 @@
+{
+  "name": "conjure",
+  "version": "1.0.0",
+  "description": "Intelligent delegation framework for routing tasks to external LLM services while retaining strategic oversight",
+  "skills": [
+    "skills/delegation-core",
+    "skills/gemini-delegation",
+    "skills/qwen-delegation"
+  ],
+  "commands": [],
+  "hooks": {
+    "gemini": {
+      "on_tool_start": "hooks/gemini/bridge.on_tool_start",
+      "after_tool_use": "hooks/gemini/bridge.after_tool_use"
+    }
+  },
+  "tools": [
+    "tools/quota_tracker.py",
+    "tools/usage_logger.py",
+    "bin/status.sh"
+  ]
+}
