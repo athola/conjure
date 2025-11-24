@@ -1,34 +1,71 @@
 #!/usr/bin/env python3
-"""
-Gemini CLI Bridge Hook
+"""Gemini CLI Bridge Hook.
 
-This hook detects when Claude is about to perform operations that would benefit
-from Gemini's large context window. It suggests delegating to the gemini-delegation skill.
-
-The hook provides a structured recommendation to use the gemini-delegation skill.
-It also monitors Gemini quota usage to prevent rate limit exhaustion.
+Detects operations that should delegate to Gemini's large context window and
+surfaces suggestions via the gemini-delegation skill. Monitors quota usage to
+avoid rate-limit exhaustion while keeping Claude in charge of strategy.
 """
+
+from __future__ import annotations
 
 import json
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
-# Import quota tracker
+# Import quota tracker for runtime use
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-try:
-    from quota_tracker import GeminiQuotaTracker, estimate_tokens_from_gemini_command
+
+try:  # Runtime import
+    import quota_tracker as _quota_tracker  # type: ignore[import-not-found]
+
+    _QUOTA_AVAILABLE = True
 except ImportError:
-    # Default if quota tracker is not available
-    class GeminiQuotaTracker:
-        def __init__(self): pass
-        def get_quota_status(self): return "❓ Unknown", []
-        def estimate_task_tokens(self, paths, prompt_len=100): return 10000
-        def can_handle_task(self, tokens): return True, []
+    _QUOTA_AVAILABLE = False
 
-    def estimate_tokens_from_gemini_command(cmd): return 10000
+if _QUOTA_AVAILABLE:
+    GeminiQuotaTracker = _quota_tracker.GeminiQuotaTracker  # type: ignore[attr-defined]
+    estimate_tokens_from_gemini_command = (
+        _quota_tracker.estimate_tokens_from_gemini_command  # type: ignore[attr-defined]
+    )
+else:
 
-def calculate_context_size(file_paths):
+    class _FallbackQuotaTracker:  # type: ignore[override]
+        """Fallback quota tracker when the real module is unavailable."""
+
+        def __init__(self) -> None:
+            """Initialize fallback tracker."""
+
+        def get_quota_status(self) -> tuple[str, list[str]]:
+            """Return unknown quota status."""
+            return "❓ Unknown", []
+
+        def estimate_task_tokens(
+            self, paths: Iterable[str], prompt_len: int = 100
+        ) -> int:
+            """Return a conservative token estimate."""
+            return 10000
+
+        def can_handle_task(self, tokens: int) -> tuple[bool, list[str]]:
+            """Assume the task can be handled."""
+            return True, []
+
+    def _fallback_estimate_tokens(cmd: str) -> int:
+        """Fallback estimation when gemini command parsing is unavailable."""
+        return 10000
+
+    GeminiQuotaTracker = _FallbackQuotaTracker
+    estimate_tokens_from_gemini_command = _fallback_estimate_tokens
+
+
+CONTEXT_THRESHOLD_BYTES = 100 * 1024
+DESCRIPTION_PREVIEW_CHARS = 100
+MIN_PATH_TOKEN_LENGTH = 3
+
+
+def calculate_context_size(file_paths: Iterable[str]) -> int:
     """Estimate the total context size for given files."""
     total_size = 0
     for file_path in file_paths:
@@ -38,23 +75,59 @@ def calculate_context_size(file_paths):
             elif os.path.isdir(file_path):
                 for root, dirs, files in os.walk(file_path):
                     # Skip common non-source directories
-                    dirs[:] = [d for d in dirs if d not in [
-                        '__pycache__', 'node_modules', '.git',
-                        'venv', '.venv', 'dist', 'build', '.pytest_cache'
-                    ]]
+                    dirs[:] = [
+                        d
+                        for d in dirs
+                        if d
+                        not in [
+                            "__pycache__",
+                            "node_modules",
+                            ".git",
+                            "venv",
+                            ".venv",
+                            "dist",
+                            "build",
+                            ".pytest_cache",
+                        ]
+                    ]
                     for file in files:
-                        if file.endswith(('.py', '.js', '.ts', '.md', '.yaml', '.yml', '.json', '.toml')):
+                        if file.endswith(
+                            (
+                                ".py",
+                                ".js",
+                                ".ts",
+                                ".md",
+                                ".yaml",
+                                ".yml",
+                                ".json",
+                                ".toml",
+                            )
+                        ):
                             total_size += os.path.getsize(os.path.join(root, file))
         except (OSError, PermissionError):
             continue
     return total_size
 
-def is_intelligence_requiring_task(tool_name, args):
-    """Determine if a task requires sophisticated reasoning that Claude should handle."""
+
+def is_intelligence_requiring_task(tool_name: str, args: dict[str, Any]) -> bool:
+    """Determine if a task needs Claude-led reasoning."""
     intelligence_keywords = [
-        "architecture", "design", "review", "analyze", "evaluate", "assess",
-        "recommend", "strategy", "pattern", "optimization", "refactor",
-        "critique", "improve", "decision", "trade-off", "best practice"
+        "architecture",
+        "design",
+        "review",
+        "analyze",
+        "evaluate",
+        "assess",
+        "recommend",
+        "strategy",
+        "pattern",
+        "optimization",
+        "refactor",
+        "critique",
+        "improve",
+        "decision",
+        "trade-off",
+        "best practice",
     ]
 
     # Check Task descriptions for intelligence requirements
@@ -66,19 +139,40 @@ def is_intelligence_requiring_task(tool_name, args):
     if tool_name == "Task" and "prompt" in args:
         prompt = args["prompt"].lower()
         complexity_indicators = [
-            "comprehensive", "detailed", "thorough", "in-depth", "holistic",
-            "evaluate", "assess", "recommend", "design", "architecture",
-            "strategy", "optimization", "improvement"
+            "comprehensive",
+            "detailed",
+            "thorough",
+            "in-depth",
+            "holistic",
+            "evaluate",
+            "assess",
+            "recommend",
+            "design",
+            "architecture",
+            "strategy",
+            "optimization",
+            "improvement",
         ]
         return any(indicator in prompt for indicator in complexity_indicators)
 
     return False
 
-def is_data_processing_task(tool_name, args):
+
+def is_data_processing_task(tool_name: str, args: dict[str, Any]) -> bool:
     """Identify tasks that are primarily data processing rather than reasoning."""
     data_processing_patterns = [
-        "summarize", "list", "count", "find", "search", "locate", "extract",
-        "catalog", "inventory", "enumerate", "identify patterns", "grep"
+        "summarize",
+        "list",
+        "count",
+        "find",
+        "search",
+        "locate",
+        "extract",
+        "catalog",
+        "inventory",
+        "enumerate",
+        "identify patterns",
+        "grep",
     ]
 
     if tool_name == "Task" and "description" in args:
@@ -91,14 +185,12 @@ def is_data_processing_task(tool_name, args):
 
     return False
 
-def should_suggest_gemini(tool_name, args):
+
+def should_suggest_gemini(tool_name: str, args: dict[str, Any]) -> bool:
     """Determine if Gemini CLI would be beneficial for this operation."""
     # IMPORTANT: Block delegation of intelligence-requiring tasks
     if is_intelligence_requiring_task(tool_name, args):
         return False  # Claude should handle these tasks directly
-
-    # Context size threshold (100KB)
-    CONTEXT_THRESHOLD = 100 * 1024
 
     if tool_name in ["Read", "Glob", "Grep", "Task"]:
         # Extract file paths from args
@@ -121,69 +213,88 @@ def should_suggest_gemini(tool_name, args):
 
         elif tool_name == "Task" and "subagent_type" in args:
             # Only suggest Gemini for data-processing exploration tasks
-            if (args.get("subagent_type") in ["Explore", "general-purpose"] and
-                is_data_processing_task(tool_name, args)):
+            if args.get("subagent_type") in [
+                "Explore",
+                "general-purpose",
+            ] and is_data_processing_task(tool_name, args):
                 return True
 
         # Calculate context size for specific files
         if file_paths:
             total_size = calculate_context_size(file_paths)
-            return total_size > CONTEXT_THRESHOLD
+            return total_size > CONTEXT_THRESHOLD_BYTES
 
     return False
 
-def format_gemini_suggestion(tool_name, args):
+
+def format_gemini_suggestion(tool_name: str, args: dict[str, Any]) -> list[str]:
     """Format a helpful suggestion for using Gemini CLI."""
-    suggestions = []
+    suggestions: list[str] = []
 
     if tool_name == "Read":
         file_path = args.get("file_path", "")
-        suggestions.append(f"Data processing: `gemini -p '@{file_path} Extract and summarize content'`")
+        suggestions.append(
+            f"Data processing: `gemini -p '@{file_path} Extract and summarize content'`"
+        )
 
     elif tool_name == "Glob":
         pattern = args.get("pattern", "")
-        suggestions.append(f"File cataloging: `gemini -p '@{pattern} List and categorize matching files'`")
+        suggestions.append(
+            "File cataloging: `gemini -p '@"
+            f"{pattern} List and categorize matching files'`"
+        )
 
     elif tool_name == "Grep":
         search_path = args.get("path", ".")
         pattern = args.get("pattern", "")
-        suggestions.append(f"Pattern enumeration: `gemini -p '@{search_path} Count and list all {pattern} instances'`")
+        suggestions.append(
+            "Pattern enumeration: `gemini -p '@"
+            f"{search_path} Count and list all {pattern} instances'`"
+        )
 
     elif tool_name == "Task":
         task_type = args.get("subagent_type", "")
-        suggestions.append(f"Large-scale data processing with gemini-delegation skill for {task_type}")
+        suggestions.append(
+            f"Large-scale data processing with gemini-delegation skill for {task_type}"
+        )
 
     return suggestions
 
-def format_collaborative_suggestion(tool_name, args):
+
+def format_collaborative_suggestion(tool_name: str, args: dict[str, Any]) -> list[str]:
     """Format suggestions for Claude+Gemini collaborative workflows."""
-    collaborative_suggestions = []
+    collaborative_suggestions: list[str] = []
 
     if tool_name == "Task":
         description = args.get("description", "")
-        prompt = args.get("prompt", "")
-
-        collaborative_suggestions.extend([
-            "🧠 **Intelligence Task Detected** - Claude should lead this analysis",
-            "",
-            "🤝 **Suggested Collaborative Workflow**:",
-            "1. Claude: Perform sophisticated reasoning and evaluation",
-            "2. Gemini: Process large datasets and identify patterns at scale",
-            "3. Claude: Synthesize Gemini's findings with strategic insights",
-            "",
-            "💡 **Example for this task**:",
-            f"   Claude: {description[:100]}..." if len(description) > 100 else f"   Claude: {description}",
-            "   Gemini: Process large codebase for pattern data",
-            "   Claude: Analyze patterns + provide architectural recommendations",
-            "",
-            "Use gemini-delegation skill for step 2 only"
-        ])
+        collaborative_suggestions.extend(
+            [
+                "Intelligence Task Detected - Claude should lead this analysis",
+                "",
+                "Suggested Collaborative Workflow:",
+                "1. Claude: Perform sophisticated reasoning and evaluation",
+                "2. Gemini: Process large datasets and identify patterns at scale",
+                "3. Claude: Synthesize Gemini's findings with strategic insights",
+                "",
+                "Example for this task:",
+                (
+                    f"   Claude: {description[:DESCRIPTION_PREVIEW_CHARS]}..."
+                    if len(description) > DESCRIPTION_PREVIEW_CHARS
+                    else f"   Claude: {description}"
+                ),
+                "   Gemini: Process large codebase for pattern data",
+                "   Claude: Analyze patterns + provide architectural recommendations",
+                "",
+                "Use gemini-delegation skill for step 2 only",
+            ]
+        )
 
     return collaborative_suggestions
 
+
 # Main hook logic
-payload = json.load(sys.stdin)
-tool_use = payload.get("tool_use", {})
+payload: dict[str, Any] = json.load(sys.stdin)
+tool_use: dict[str, Any] = payload.get("tool_use", {})
 
 # Initialize quota tracker
 quota_tracker = GeminiQuotaTracker()
@@ -196,7 +307,9 @@ if tool_use:
     # Check if this is an intelligence-requiring task
     if is_intelligence_requiring_task(tool_name, tool_args):
         # Suggest collaborative workflow for complex tasks
-        collaborative_suggestions = format_collaborative_suggestion(tool_name, tool_args)
+        collaborative_suggestions = format_collaborative_suggestion(
+            tool_name, tool_args
+        )
 
         print(file=sys.stderr)
         for suggestion in collaborative_suggestions:
@@ -215,14 +328,19 @@ if tool_use:
             # Extract paths from task description/prompt
             description = tool_args.get("description", "") + tool_args.get("prompt", "")
             for word in description.split():
-                if word.startswith(("@", "./", "/")) and len(word) > 2:
+                path_like = word.startswith(("@", "./", "/"))
+                if path_like and len(word) >= MIN_PATH_TOKEN_LENGTH:
                     file_paths.append(word.lstrip("@").strip("./"))
 
         estimated_tokens = quota_tracker.estimate_task_tokens(file_paths)
         can_handle, issues = quota_tracker.can_handle_task(estimated_tokens)
 
         print("Gemini CLI Data Processing Suggestion", file=sys.stderr)
-        print(f"This data processing operation might benefit from Gemini's large context window.", file=sys.stderr)
+        print(
+            "This data processing operation might benefit from Gemini's large context "
+            "window.",
+            file=sys.stderr,
+        )
         print(f"Estimated tokens needed: ~{estimated_tokens:,}", file=sys.stderr)
         print(file=sys.stderr)
 
@@ -239,7 +357,10 @@ if tool_use:
             for issue in issues:
                 print(f"  - {issue}", file=sys.stderr)
             print(file=sys.stderr)
-            print("Recommendation: Wait for quota reset or break into smaller tasks", file=sys.stderr)
+            print(
+                "Recommendation: Wait for quota reset or break into smaller tasks",
+                file=sys.stderr,
+            )
         else:
             print("Quota Available - Task can proceed", file=sys.stderr)
 
@@ -251,12 +372,22 @@ if tool_use:
             print(f"  -> {suggestion}", file=sys.stderr)
 
         print(file=sys.stderr)
-        print("Use the gemini-delegation skill: `/skill gemini-delegation`", file=sys.stderr)
-        print("Or run directly with the `gemini` CLI if you have it configured.", file=sys.stderr)
+        print(
+            "Use the gemini-delegation skill: `/skill gemini-delegation`",
+            file=sys.stderr,
+        )
+        print(
+            "Or run directly with the `gemini` CLI if you have it configured.",
+            file=sys.stderr,
+        )
 
-        if quota_status not in ["✅ Healthy"]:
+        if quota_status not in ["[OK] Healthy"]:
             print(file=sys.stderr)
-            print("Pro Tip: Monitor quota with: `python3 ~/.claude/hooks/gemini/quota_tracker.py`", file=sys.stderr)
+        print(
+            "Pro Tip: Monitor quota with: `python3 ~/.claude/hooks/gemini/"
+            "quota_tracker.py`",
+            file=sys.stderr,
+        )
 
         print(file=sys.stderr)
 

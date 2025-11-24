@@ -1,243 +1,320 @@
 ---
 name: qwen-delegation
-description: Qwen MCP-specific delegation workflow utilizing Qwen's large context window and sandbox capabilities.
+description: Qwen CLI delegation workflow with quota tracking, authentication, and usage logging. Utilizes shared shell execution infrastructure for consistent delegation patterns.
 category: delegation-implementation
-tags: [qwen, mcp, delegation, large-context, sandbox, code-execution]
+tags: [qwen, cli, delegation, quota-management, large-context, shell-execution]
 dependencies: [delegation-core]
-tools: [qwen-code-mcp, mcp-client]
+tools: [qwen-cli, delegation-executor, quota-tracker, usage-logger]
 usage_patterns:
-  - mcp-integration
-  - large-file-analysis
-  - sandbox-execution
+  - qwen-cli-integration
+  - large-context-analysis
+  - bulk-processing
   - multi-file-comparison
+  - shell-delegation
 complexity: intermediate
-estimated_tokens: 1300
+estimated_tokens: 1500
 ---
 
-# Qwen MCP Delegation
+# Qwen CLI Delegation
 
 ## Overview
 
-This skill implements `conjure:delegation-core` for Qwen via MCP (Model Context Protocol). It handles Qwen-specific invocation patterns and utilizes its large context window.
+This skill implements `conjure:delegation-core` for the Qwen CLI using the shared shell execution infrastructure. It provides authentication, quota management, and Qwen-specific command construction with consistent delegation patterns.
 
 ## When to Use
-- After `Skill(conjure:delegation-core)` determines delegation is suitable.
-- When you need Qwen's large context window.
-- For sandbox code execution in an isolated environment.
-- For bulk code generation or file analysis.
-- If the Qwen MCP server is configured and accessible.
+- After `Skill(conjure:delegation-core)` determines Qwen is suitable.
+- When you need Qwen's large context window (100K+ tokens).
+- For batch processing, summarization, or multi-file analysis.
+- For code generation and pattern extraction tasks.
+- If the `qwen` CLI is installed and configured.
 
 ## Prerequisites
 
-**MCP Configuration:**
-Ensure Qwen is configured in your MCP settings (typically `~/.claude/mcp.json` or project settings).
-
-**Verify Connectivity:**
+**CLI Installation:**
 ```bash
-# Test MCP tool availability
-claude-code status  # Should show qwen-code tools listed
+# Install Qwen CLI (if not already installed)
+pip install qwen-cli
 
-# Alternative verification via MCP client
-mcp list-tools | grep qwen-code
+# Verify installation
+qwen --version
 
-# Direct tool test
-claude-code -c "Use qwen-code:ask-qwen to test connectivity"
+# Check available models
+qwen --help | grep -A 10 "model"
 ```
+
+**Authentication Setup:**
+```bash
+# Check authentication status
+qwen auth status
+
+# Login if needed
+qwen auth login
+
+# Or set API key
+export QWEN_API_KEY="your-key"
+
+# Verify authentication
+qwen "ping"  # Should respond successfully
+```
+
+**Service Configuration:**
+- Update delegation configuration in `~/.claude/hooks/delegation/config.json`
+- Set Qwen-specific quota limits and model preferences
 
 ## Delegation Flow
-1. `qwen-delegation:mcp-verified`: Verify Qwen MCP (Multi-Cloud Platform) access.
-2. `qwen-delegation:context-prepared`: Prepare context for Qwen.
-3. `qwen-delegation:request-executed`: Execute the request via Qwen.
-4. `qwen-delegation:output-reviewed`: Review Qwen's output.
+1. `qwen-delegation:auth-verified`: Verify authentication for Qwen CLI.
+2. `qwen-delegation:quota-checked`: Check Qwen API quota and limits.
+3. `qwen-delegation:command-executed`: Execute the command via Qwen CLI.
+4. `qwen-delegation:usage-logged`: Log Qwen API usage.
 
-## Step 1: Verify MCP Connection (`qwen-delegation:mcp-verified`)
+## Step 1: Verify Authentication (`qwen-delegation:auth-verified`)
 
-Check that Qwen MCP tools are available:
-- `qwen-code:ask-qwen`: General queries.
-- `qwen-code:sandbox`: Isolated code execution (if available).
-
-**Verification Commands:**
 ```bash
-# List available MCP tools
-claude-code --list-tools | grep qwen
+# Check authentication status
+qwen auth status
 
 # Test basic connectivity
-qwen-code:ask-qwen "Hello, can you respond with 'MCP connection successful'?"
+qwen "Respond with 'OK'"
 
-# Check Qwen model info
-qwen-code:ask-qwen "What model are you and what are your context limits?"
+# Verify model access
+qwen --model qwen-max "What model are you?"
 ```
 
-If tools aren't visible, verify MCP server configuration:
+If authentication fails:
+- For interactive login: use `qwen auth login`
+- For API key: Set the `QWEN_API_KEY` environment variable
+- For model selection: Set `QWEN_MODEL` if not using default
+
+## Step 2: Check Quota (`qwen-delegation:quota-checked`)
+
 ```bash
-# Check MCP server status
-systemctl --user status mcp-server
+# Quick status using shared delegation executor
+python ~/conjure/tools/delegation_executor.py verify qwen
 
-# Restart MCP server if needed
-systemctl --user restart mcp-server
+# Check quota status
+python ~/conjure/tools/delegation_executor.py usage --service qwen
 
-# Verify configuration file
-cat ~/.claude/mcp.json | jq '.servers[].name' | grep qwen
+# Comprehensive status check
+make quota-status
 ```
 
-## Step 2: Prepare Context (`qwen-delegation:context-prepared`)
+**Quota Thresholds:**
+- [OK] Healthy: Less than 80% usage
+- [WARNING] Warning: 80-95% usage
+- [CRITICAL] Critical: Over 95% usage (defer non-urgent tasks)
 
-**Formulate the Request:**
-- Write a clear, self-contained prompt.
-- Include all necessary file references using `@path` syntax.
-- Specify the expected output format.
-- Note any constraints or requirements.
+If quota is critical, consider:
+- Waiting for rate limit reset
+- Using a different service (Gemini)
+- Breaking the task into smaller batches
 
-**Context Guidelines:**
-- Qwen handles very large contexts well.
-- Use `@` references for file inclusion.
-- Be explicit about output format expectations.
+## Step 3: Execute Command (`qwen-delegation:command-executed`)
 
-**Example Context:**
-```
-Analyze @src/main.rs and @src/lib.rs
-List all public functions with their signatures
-Output as a markdown table with columns: Function, Arguments, Return Type
-```
+**Using Shared Delegation Executor:**
+```bash
+# Basic file analysis
+python ~/conjure/tools/delegation_executor.py qwen "Analyze this code" --files src/main.py
 
-## Step 3: Execute Request (`qwen-delegation:request-executed`)
+# With specific model
+python ~/conjure/tools/delegation_executor.py qwen "Summarize these files" \
+  --files src/**/*.py --model qwen-max
 
-**Basic Query:**
-```
-/qwen-code:ask-qwen "Analyze @src/main.rs for potential improvements"
-```
-
-**With Multiple Files:**
-```
-/qwen-code:ask-qwen "Compare @old/module.py with @new/module.py and list differences"
+# With output format
+python ~/conjure/tools/delegation_executor.py qwen "Extract functions" \
+  --files src/main.py --format json
 ```
 
-**Sandbox Execution (if available):**
+**Direct CLI Usage:**
+```bash
+# Basic file analysis
+qwen -p "@path/to/file Analyze this code"
+
+# Multiple files
+qwen -p "@src/**/*.py Summarize these files"
+
+# Specific model
+qwen --model qwen-max -p "..."
+
+# JSON output
+qwen --format json -p "..."
 ```
-/qwen-code:sandbox "Run this Python code in isolation: ..."
+
+**Context Inclusion:**
+- Use `@path` to include file contents
+- Use `@directory/**/*` for recursive inclusion
+- Qwen handles large contexts well (100K+ tokens)
+
+**Save Output:**
+```bash
+# Save to file for audit
+qwen -p "..." > delegations/qwen/$(date +%Y%m%d_%H%M%S).md
 ```
 
-**Best Practices:**
-- Include all necessary context in a single request.
-- Be specific about the expected output format.
-- Provide examples if output structure matters.
+## Step 4: Log Usage (`qwen-delegation:usage-logged`)
 
-## Step 4: Review and Integrate (`qwen-delegation:output-reviewed`)
+Usage is automatically logged by the shared delegation executor. For manual logging:
+```bash
+# Log manual usage
+python ~/conjure/tools/usage_logger.py --log "qwen analysis" 50000 true 15
 
-**Validation Checklist:**
-- [ ] Output matches expected format.
-- [ ] Code suggestions are syntactically correct.
-- [ ] Factual claims are plausible.
-- [ ] No obvious hallucinations or errors.
+# View usage report
+python ~/conjure/tools/delegation_executor.py usage
 
-**Integration:**
-- Apply only validated results.
-- Adapt to local code style if needed.
-- Run tests/linting on any code changes.
+# Check recent usage
+make usage-report
+```
 
-**Document:**
-- What was delegated.
-- What was returned.
-- What was integrated vs. discarded.
+## Token Usage Estimates
 
-## Qwen Strengths
+**Qwen Model Capabilities:**
+- **Context Window**: Up to 100K+ tokens for standard models
+- **Cost Efficiency**: Varies by model tier, typically competitive with Gemini
+- **Speed**: Fast models available for quick tasks, more capable models for complex analysis
 
-**Good For:**
-- Very large file analysis (100K+ lines).
-- Multi-file comparisons.
-- Bulk code generation.
-- Pattern extraction across codebases.
-- Explanations of complex code.
-- Sandbox experimentation.
+**Task Token Estimates:**
+- File analysis: 10-30 tokens per file + 150-400 for analysis
+- Code summarization: 1-2% of original file size + 200-600 for summary
+- Pattern extraction: 3-15 tokens per match + 80-200 for formatting
+- Boilerplate generation: 40-150 tokens per template + output tokens
 
-**Less Suitable For:**
-- Tasks requiring external tool access.
-- Real-time iterative development.
-- Security-sensitive operations.
-- Tasks needing specific local context.
+**Sample Delegation Costs:**
+- Analyze 100 Python files (50K tokens): Competitive pricing
+- Summarize large codebase (200K tokens): Cost-effective for bulk analysis
+- Generate 50 API endpoints (3K output): Efficient for code generation
+
+## Qwen CLI Reference
+
+**Common Options:**
+| Flag | Purpose |
+|------|---------|
+| `-p "prompt"` | Specify prompt |
+| `--model <name>` | Select model |
+| `--format <type>` | Output format (json, markdown) |
+| `--temperature <0-1>` | Control randomness |
+| `@path` | Include file in context |
+
+**Models:**
+- `qwen-turbo`: Fast, good for simple tasks
+- `qwen-max`: More capable, larger context window
+- `qwen-coder`: Specialized for code tasks (if available)
+
+## Smart Delegation
+
+The shared delegation executor can automatically select the best service:
+
+```bash
+# Auto-select best service based on requirements
+python ~/conjure/tools/delegation_executor.py auto "Analyze large codebase" \
+  --files src/**/* --requirement large_context
+
+# Force specific service for comparison
+python ~/conjure/tools/delegation_executor.py gemini "Quick analysis" --files src/main.py
+python ~/conjure/tools/delegation_executor.py qwen "Detailed analysis" --files src/main.py
+```
+
+## Usage Monitoring and Analytics
+
+**Real-time Monitoring:**
+```bash
+# Check current usage across all services
+python ~/conjure/tools/delegation_executor.py usage
+
+# Service-specific usage
+python ~/conjure/tools/delegation_executor.py usage --service qwen
+python ~/conjure/tools/delegation_executor.py usage --service gemini
+
+# Usage for last N days
+python ~/conjure/tools/delegation_executor.py usage --days 30
+```
+
+**Performance Analytics:**
+- Success rates per service
+- Average response times
+- Token consumption patterns
+- Error frequency and types
+- Cost analysis
 
 ## Error Handling & Troubleshooting
 
-### MCP Connection Issues
+### Common Error Scenarios
 
-**Tools Not Visible**
-- **Check Server Status**: `systemctl --user status mcp-server`
-- **Verify Configuration**: `cat ~/.claude/mcp.json | jq '.servers[] | select(.name | contains("qwen"))'`
-- **Restart Service**: `systemctl --user restart mcp-server`
-- **Manual Test**: `mcp list-tools | grep qwen`
+**Authentication Errors (HTTP 401/403)**
+- **Quick Fix**: `qwen auth login` or verify `QWEN_API_KEY`
+- **Check Permissions**: Ensure API key has necessary scopes
+- **Token Refresh**: Re-authenticate if token expired
+- **Regional Issues**: Some models available only in certain regions
 
-**Connection Timeouts**
-- **Network Issues**: Test basic connectivity to MCP server
-- **Port Conflicts**: Check if another service is using the MCP port
-- **Resource Limits**: Monitor system resources: `htop | grep mcp`
-- **Configuration Errors**: Validate JSON syntax: `jq . ~/.claude/mcp.json`
+**Rate Limit Errors (HTTP 429)**
+- **Immediate Action**: Wait for rate limit reset
+- **Investigation**: Run `python ~/conjure/tools/delegation_executor.py verify qwen`
+- **Prevention**: Check quota before large tasks, batch requests
+- **Alternative**: Consider gemini service if Qwen is rate-limited
 
-### Delegation-Specific Issues
-
-**Context Window Exceeded**
-- **Qwen Advantage**: Qwen typically handles 100K+ tokens, verify model limits
-- **Diagnostic**: Use `/qwen-code:ask-qwen "What is your context window size?"`
+**Context Too Large (HTTP 400)**
+- **Diagnostic**: Estimate tokens: `python ~/conjure/tools/delegation_executor.py --estimate --files src/**/*`
 - **Solutions**:
-  - Split large files: `split -l 1000 large_file.py part_`
-  - Use selective analysis: `@src/main.rs @src/lib.rs` instead of `@src/**/*`
-  - Pre-filter content: Remove comments, tests, or examples if not needed
+  - Use qwen-max for larger context windows
+  - Split into multiple requests with selective file inclusion
+  - Pre-process: remove comments, tests, or binary files
+  - Use globbing patterns instead of recursive inclusion
 
-**Poor Quality Results**
-- **Prompt Optimization**: Include output format examples
-- **Context Enrichment**: Add style guides or similar examples
-- **Step-by-Step**: Break complex analysis into sequential questions
-- **Validation**: Ask Qwen to self-check its work
+**Model Unavailable (HTTP 404)**
+- **Check Model**: `qwen --help | grep -A 10 "model"`
+- **Alternative**: Use `qwen-turbo` for faster, smaller tasks
+- **Version Issues**: Update qwen-cli to latest version
 
-**Sandbox Execution Failures**
-- **Permission Issues**: Check file system permissions for working directory
-- **Missing Dependencies**: Verify required packages are installed in sandbox
-- **Timeout Issues**: Break long-running code into smaller chunks
-- **Resource Limits**: Monitor memory/CPU usage during execution
+**Command Not Found**
+- **Installation**: `pip install qwen-cli`
+- **PATH Issues**: Ensure `~/.local/bin` is in PATH
+- **Verification**: `which qwen` and `qwen --version`
 
 ### Performance Issues
 
 **Slow Response Times**
-- **Model Selection**: Check if faster model variants are available
-- **Context Optimization**: Minimize @file inclusions to essential content
-- **Batch Operations**: Combine multiple related questions into single request
+- **Model Choice**: Use `qwen-turbo` for faster responses
+- **Context Optimization**: Remove unnecessary files from `@` includes
+- **Batch Processing**: Group multiple small queries into one request
 
-**Inconsistent Output Format**
-- **Explicit Instructions**: Specify exact output format with examples
-- **JSON Mode**: If available, use structured output mode
-- **Post-Processing**: Plan for output cleanup if needed
+**Inconsistent Results**
+- **Temperature Setting**: Use `--temperature 0.0` for deterministic output
+- **Seed Parameter**: Use `--seed` for reproducible results (if supported)
+- **Prompt Engineering**: Be more specific and provide examples
 
 ### Debugging Tools
 
-**MCP Diagnostic Commands:**
+**Enable Debug Logging:**
 ```bash
-# Check MCP server logs
-journalctl --user -u mcp-server -f
-
-# Test tool availability
-mcp call-tool qwen-code:ask-qwen '{"prompt": "test"}'
-
-# Monitor resource usage
-watch -n 1 'ps aux | grep -E "(mcp|qwen)"'
+export QWEN_DEBUG=1
+qwen -p "test"  # Will show full request/response
 ```
 
-**Qwen Model Information:**
+**Test with Simple Request:**
 ```bash
-# Check available models
-/qwen-code:ask-qwen "What model are you? What are your capabilities and limits?"
-
-# Test basic functionality
-/qwen-code:ask-qwen "Analyze this simple Python function and explain what it does: def add(a, b): return a + b"
+qwen -p "Respond with 'OK'"  # Basic connectivity test
 ```
 
-## Integration Notes
+**Validate Configuration:**
+```bash
+# Test shared delegation executor
+python ~/conjure/tools/delegation_executor.py list-services
 
-- Use `delegation-core` for task assessment before invoking.
-- Validate results before integration.
-- Document delegations for pattern analysis.
-- Consider latency for time-sensitive workflows.
+# Verify qwen service
+python ~/conjure/tools/delegation_executor.py verify qwen
+```
+
+## Integration with Existing Workflow
+
+The updated qwen-delegation skill now uses the same patterns as gemini-delegation:
+
+- **Consistent API**: Both services use `delegation_executor.py`
+- **Unified Logging**: All usage logged to central location
+- **Shared Quota Management**: Common quota tracking interface
+- **Standardized Error Handling**: Consistent error patterns and recovery
+- **Smart Service Selection**: Automatic service optimization
 
 ## Exit Criteria
-- MCP connection verified.
-- Context prepared with all necessary information.
-- Request executed successfully.
-- Output reviewed and validated before integration.
+- Authentication confirmed working.
+- Quota checked and sufficient.
+- Command executed successfully using shared infrastructure.
+- Usage logged for tracking with unified analytics.
+- Results validated and ready for integration.

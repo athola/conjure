@@ -18,6 +18,13 @@ config/secrets.json
 __pycache__/
 *.py[cod]
 
+# Virtual environments and uv cache
+.venv
+.uv-cache
+
+# UV lock file (optional - remove if you want to commit it)
+# uv.lock
+
 # OS-specific
 .DS_Store
 Thumbs.db
@@ -29,3 +36,4 @@ Thumbs.db
 
 # Local configuration overrides
 config/local.json
+*.txt
