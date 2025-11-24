@@ -10,9 +10,13 @@ import json
 import logging
 import os
 import shlex
+from collections.abc import Iterable
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import tiktoken
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,6 +32,14 @@ DEFAULT_LIMITS = {
     "tokens_per_minute": 32000,
     "tokens_per_day": 1000000,
 }
+
+FILE_TOKEN_RATIOS = {
+    "code": 3.2,  # .py, .js, .ts, .rs
+    "json": 3.6,  # .json, .yaml, .yml, .toml
+    "text": 4.2,  # .md, .txt
+    "default": 4.0,
+}
+FILE_OVERHEAD_TOKENS = 6
 
 
 class GeminiQuotaTracker:
@@ -195,40 +207,94 @@ class GeminiQuotaTracker:
     def estimate_task_tokens(
         self, file_paths: list[str], prompt_length: int = 100
     ) -> int:
-        """Estimate tokens needed for a task."""
-        total_chars = prompt_length
+        """Estimate tokens needed for a task with optional tokenizer fallback."""
+        encoder = self._get_encoder()
+        if encoder:
+            return self._estimate_with_encoder(encoder, file_paths, prompt_length)
+
+        return self._estimate_with_heuristic(file_paths, prompt_length)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _get_encoder() -> Any | None:
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:  # pragma: no cover - optional dependency
+            return None
+
+    def _estimate_with_encoder(
+        self, encoder: Any, file_paths: list[str], prompt_length: int
+    ) -> int:
+        tokens = len(encoder.encode("x" * prompt_length))
+
+        for path in self._iter_source_paths(file_paths):
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="replace")
+            except (OSError, UnicodeDecodeError):
+                continue
+            tokens += len(encoder.encode(text)) + FILE_OVERHEAD_TOKENS
+
+        return tokens
+
+    def _estimate_with_heuristic(
+        self, file_paths: list[str], prompt_length: int
+    ) -> int:
+        tokens = int(prompt_length / FILE_TOKEN_RATIOS["default"])
+
+        for path in self._iter_source_paths(file_paths):
+            tokens += self._estimate_file_tokens(Path(path))
+
+        return int(tokens)
+
+    def _iter_source_paths(self, file_paths: list[str]) -> Iterable[str]:
+        skip_dirs = {
+            "__pycache__",
+            "node_modules",
+            ".git",
+            "venv",
+            ".venv",
+            "dist",
+            "build",
+        }
 
         for file_path in file_paths:
             try:
                 if os.path.isfile(file_path):
-                    total_chars += os.path.getsize(file_path)
+                    yield file_path
                 elif os.path.isdir(file_path):
                     for root, dirs, files in os.walk(file_path):
-                        # Skip common non-source directories
-                        dirs[:] = [
-                            d
-                            for d in dirs
-                            if d
-                            not in [
-                                "__pycache__",
-                                "node_modules",
-                                ".git",
-                                "venv",
-                                ".venv",
-                                "dist",
-                                "build",
-                            ]
-                        ]
+                        dirs[:] = [d for d in dirs if d not in skip_dirs]
                         for file in files:
-                            if file.endswith(
-                                (".py", ".js", ".ts", ".md", ".yaml", ".yml", ".json")
-                            ):
-                                total_chars += os.path.getsize(os.path.join(root, file))
+                            candidate = os.path.join(root, file)
+                            if Path(candidate).suffix.lower() in {
+                                ".py",
+                                ".js",
+                                ".ts",
+                                ".md",
+                                ".yaml",
+                                ".yml",
+                                ".json",
+                                ".toml",
+                                ".txt",
+                            }:
+                                yield candidate
             except (OSError, PermissionError):
                 continue
 
-        # Rough estimation: ~4 chars per token
-        return total_chars // 4
+    def _estimate_file_tokens(self, path: Path) -> int:
+        size = path.stat().st_size
+        suffix = path.suffix.lower()
+
+        if suffix in {".py", ".js", ".ts", ".rs"}:
+            ratio = FILE_TOKEN_RATIOS["code"]
+        elif suffix in {".json", ".yaml", ".yml", ".toml"}:
+            ratio = FILE_TOKEN_RATIOS["json"]
+        elif suffix in {".md", ".txt"}:
+            ratio = FILE_TOKEN_RATIOS["text"]
+        else:
+            ratio = FILE_TOKEN_RATIOS["default"]
+
+        return int(size / ratio) + FILE_OVERHEAD_TOKENS
 
     def can_handle_task(self, estimated_tokens: int) -> tuple[bool, list[str]]:
         """Check if Gemini can handle a task given current quota."""

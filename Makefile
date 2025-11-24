@@ -1,4 +1,4 @@
-.PHONY: help deps check fix format lint typecheck spellcheck security-check test status clean install-hooks validate-all quota-status usage-report validate-delegation delegate-status delegate-verify delegate-usage delegate-test delegate-gemini delegate-qwen delegate-auto
+.PHONY: help deps check fix format lint typecheck spellcheck security-check test status clean install-hooks validate-all quota-status usage-report validate-delegation delegate-status delegate-verify delegate-usage delegate-test delegate-gemini delegate-qwen delegate-auto demo-token-estimate
 
 # Default target
 help:
@@ -30,7 +30,12 @@ help:
 
 # Dependency management
 deps:
-	uv sync
+	UV_CACHE_DIR=$(PWD)/.uv-cache uv sync
+	UV_CACHE_DIR=$(PWD)/.uv-cache uv run python -c "import tiktoken; print('tiktoken available')"
+
+demo-token-estimate:
+	@echo "Demonstrating token estimation with tiktoken"
+	UV_CACHE_DIR=$(PWD)/.uv-cache uv run python -c "from tools.delegation_executor import Delegator; files=[]; prompt='Summarize the delegation executor and quota tracker.'; print(f'Estimated tokens: {Delegator().estimate_tokens(files, prompt)}')"
 
 check:
 	@echo "Running dependency validation..."

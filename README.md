@@ -35,7 +35,9 @@ make install-hooks  # pre-commit hooks
 make test           # lint + type + security checks
 ```
 
-Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/).
+Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/), and `tiktoken`
+for accurate token estimates:
+`uv add tiktoken`
 
 ## Usage
 
@@ -68,7 +70,7 @@ uv run python tools/delegation_executor.py auto "Analyze this code" \
 
 # Force a specific service
 uv run python tools/delegation_executor.py gemini "Summarize" \
-  --files docs/*.md --model gemini-2.0-pro-exp
+  --files docs/*.md --model gemini-2.5-pro-exp
 ```
 
 ### Make Commands

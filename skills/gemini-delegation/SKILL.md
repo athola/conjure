@@ -94,7 +94,7 @@ gemini -p "@path/to/file Analyze this code"
 gemini -p "@src/**/*.py Summarize these files"
 
 # Specific model
-gemini --model gemini-2.0-pro-exp -p "..."
+gemini --model gemini-2.5-pro-exp -p "..."
 
 # JSON output
 gemini --output-format json -p "..."
@@ -153,8 +153,8 @@ python3 ~/conjure/tools/usage_logger.py "gemini -p '@src/ analyze'" 50000 true 1
 | `@path` | Include file in context. |
 
 **Models:**
-- `gemini-2.0-flash-exp`: Fast, good for simple tasks.
-- `gemini-2.0-pro-exp`: More capable, higher latency.
+- `gemini-2.5-flash-exp`: Fast, good for simple tasks.
+- `gemini-2.5-pro-exp`: More capable, higher latency.
 - `gemini-exp-1206`: Experimental features.
 
 ## Quota Monitoring
@@ -186,7 +186,7 @@ print(logger.get_recent_errors())
 - **Immediate Action**: Wait 60 seconds for RPM reset
 - **Investigation**: Run `~/conjure/hooks/gemini/status.sh`
 - **Prevention**: Check quota before large tasks, batch requests
-- Workaround: Consider `gemini-2.0-flash` to reduce RPM usage.
+- Workaround: Consider `gemini-2.5-flash` to reduce RPM usage.
 
 **Authentication Errors (HTTP 401/403)**
 - **Quick Fix**: `gemini auth login` or verify `GEMINI_API_KEY`
@@ -203,7 +203,7 @@ print(logger.get_recent_errors())
 
 **Model Unavailable (HTTP 404)**
 - **Check Model**: `gemini --help | grep -A 10 "model"`
-- **Alternative**: Use `gemini-2.0-flash-exp` as a secondary option
+- **Alternative**: Use `gemini-2.5-flash-exp` as a secondary option
 - **Region Issues**: Some models available only in certain regions
 
 **Network/Connection Issues**
@@ -214,7 +214,7 @@ print(logger.get_recent_errors())
 ### Performance Issues
 
 **Slow Response Times**
-- **Model Choice**: Use `gemini-2.0-flash-exp` for faster responses
+- **Model Choice**: Use `gemini-2.5-flash-exp` for faster responses
 - **Context Optimization**: Remove unnecessary files from `@` includes
 - **Batch Processing**: Group multiple small queries into one request
 

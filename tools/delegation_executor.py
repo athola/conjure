@@ -11,10 +11,14 @@ import logging
 import os
 import subprocess  # nosec B404 - CLI tool intentionally uses subprocess
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import tiktoken
 
 # Configure logging for error tracking
 logger = logging.getLogger(__name__)
@@ -46,6 +50,15 @@ class ExecutionResult:
 
 class Delegator:
     """Unified delegation executor for multiple LLM services."""
+
+    FILE_TOKEN_RATIOS = {
+        "code": 3.2,  # .py, .js, .ts, .rs
+        "json": 3.6,  # .json, .yaml, .yml, .toml
+        "text": 4.2,  # .md, .txt
+        "default": 4.0,
+    }
+
+    FILE_OVERHEAD_TOKENS = 6
 
     # Service configurations
     SERVICES = {
@@ -161,32 +174,115 @@ class Delegator:
         return len(issues) == 0, issues
 
     def estimate_tokens(self, files: list[str], prompt: str) -> int:
-        """Estimate tokens needed for delegation."""
-        total_chars = len(prompt)
+        """Estimate tokens needed for delegation.
+
+        Strategy:
+        - If `tiktoken` is available, tokenize the prompt and readable files for
+          a model-agnostic but accurate estimate (cl100k_base).
+        - Otherwise, fall back to per-file-type heuristics with tuned
+          chars-per-token ratios.
+        """
+        encoder = self._get_encoder()
+        if encoder:
+            return self._estimate_with_encoder(encoder, files, prompt)
+
+        return self._estimate_with_heuristic(files, prompt)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _get_encoder() -> Any | None:
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:  # pragma: no cover - optional dependency
+            return None
+
+    def _estimate_with_encoder(
+        self, encoder: Any, files: list[str], prompt: str
+    ) -> int:
+        total_tokens = len(encoder.encode(prompt))
 
         for file_path in files:
             try:
                 path = Path(file_path)
                 if path.is_file():
-                    total_chars += path.stat().st_size
+                    total_tokens += self._encode_file(encoder, path)
                 elif path.is_dir():
-                    # Estimate for directory
-                    for file in path.rglob("*"):
-                        if file.is_file() and file.suffix in [
-                            ".py",
-                            ".js",
-                            ".ts",
-                            ".rs",
-                            ".md",
-                            ".txt",
-                        ]:
-                            total_chars += file.stat().st_size
-            except OSError as e:
-                logger.debug("Could not access file %s: %s", file_path, e)
+                    for file in self._iter_source_files(path):
+                        total_tokens += self._encode_file(encoder, file)
+            except OSError as exc:  # pragma: no cover - filesystem edge
+                logger.debug("Could not access file %s: %s", file_path, exc)
                 continue
 
-        # Rough estimation: ~4 chars per token
-        return total_chars // 4
+        return total_tokens
+
+    def _encode_file(self, encoder: Any, path: Path) -> int:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeDecodeError):
+            return 0
+        return len(encoder.encode(text)) + self.FILE_OVERHEAD_TOKENS
+
+    def _estimate_with_heuristic(self, files: list[str], prompt: str) -> int:
+        tokens = int(len(prompt) / self.FILE_TOKEN_RATIOS["default"])
+
+        for file_path in files:
+            try:
+                path = Path(file_path)
+                if path.is_file():
+                    tokens += self._estimate_file_tokens(path)
+                elif path.is_dir():
+                    for file in self._iter_source_files(path):
+                        tokens += self._estimate_file_tokens(file)
+            except OSError as exc:
+                logger.debug("Could not access file %s: %s", file_path, exc)
+                continue
+
+        return int(tokens)
+
+    def _estimate_file_tokens(self, path: Path) -> int:
+        size = path.stat().st_size
+        suffix = path.suffix.lower()
+
+        if suffix in {".py", ".js", ".ts", ".rs"}:
+            ratio = self.FILE_TOKEN_RATIOS["code"]
+        elif suffix in {".json", ".yaml", ".yml", ".toml"}:
+            ratio = self.FILE_TOKEN_RATIOS["json"]
+        elif suffix in {".md", ".txt"}:
+            ratio = self.FILE_TOKEN_RATIOS["text"]
+        else:
+            ratio = self.FILE_TOKEN_RATIOS["default"]
+
+        return int(size / ratio) + self.FILE_OVERHEAD_TOKENS
+
+    def _iter_source_files(self, directory: Path) -> Iterable[Path]:
+        skip_dirs = {
+            "__pycache__",
+            "node_modules",
+            ".git",
+            "venv",
+            ".venv",
+            "dist",
+            "build",
+            ".pytest_cache",
+        }
+
+        for root, dirs, files in os.walk(directory):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for file in files:
+                file_path = Path(root) / file
+                if file_path.suffix.lower() in {
+                    ".py",
+                    ".js",
+                    ".ts",
+                    ".rs",
+                    ".md",
+                    ".txt",
+                    ".json",
+                    ".yaml",
+                    ".yml",
+                    ".toml",
+                }:
+                    yield file_path
 
     def build_command(
         self,
@@ -419,11 +515,11 @@ class Delegator:
         options = {}
         if requirements.get("large_context"):
             options["model"] = (
-                "gemini-2.0-pro-exp" if service == "gemini" else "qwen-max"
+                "gemini-2.5-pro-exp" if service == "gemini" else "qwen-max"
             )
         elif requirements.get("fast_response"):
             options["model"] = (
-                "gemini-2.0-flash-exp" if service == "gemini" else "qwen-turbo"
+                "gemini-2.5-flash-exp" if service == "gemini" else "qwen-turbo"
             )
 
         result = self.execute(service, prompt, files, options)

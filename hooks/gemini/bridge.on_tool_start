@@ -269,14 +269,14 @@ def format_collaborative_suggestion(tool_name: str, args: dict[str, Any]) -> lis
         description = args.get("description", "")
         collaborative_suggestions.extend(
             [
-                "🧠 **Intelligence Task Detected** - Claude should lead this analysis",
+                "Intelligence Task Detected - Claude should lead this analysis",
                 "",
-                "🤝 **Suggested Collaborative Workflow**:",
+                "Suggested Collaborative Workflow:",
                 "1. Claude: Perform sophisticated reasoning and evaluation",
                 "2. Gemini: Process large datasets and identify patterns at scale",
                 "3. Claude: Synthesize Gemini's findings with strategic insights",
                 "",
-                "💡 **Example for this task**:",
+                "Example for this task:",
                 (
                     f"   Claude: {description[:DESCRIPTION_PREVIEW_CHARS]}..."
                     if len(description) > DESCRIPTION_PREVIEW_CHARS
