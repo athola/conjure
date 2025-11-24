@@ -1,128 +1,185 @@
-# Conjure: An Intelligent Delegation Framework
+# Conjure
 
-Conjure is a framework for intelligently delegating tasks to external LLM services. It provides a structured approach to decide when, what, and how to use these services (e.g., Gemini, Qwen, local models) while ensuring strategic control and quality. The core principle is to **delegate execution while retaining the essential intelligence** within Claude.
+Intelligent delegation for Claude Code. Save tokens by delegating work to other models. Keep strategy, design, and review for deep-thinking models; offload long-context analysis, bulk work, and summarization to inexpensive external LLM services with quota- and usage-aware tooling.
 
-## Philosophy
+## Testimonial
 
-Claude handles:
-- Architecture, strategy, and design decisions.
-- Complex reasoning and quality review.
+From an AI coding assistant's perspective:
 
-External LLMs are used for:
-- Data processing and pattern extraction.
-- Bulk operations and summarization.
+Conjure turns delegation into a first-class workflow. I stay focused on architecture and code review while Conjure routes heavy lifting to the right external model. The unified executor, quota tracking, and skill hooks mean I can suggest Gemini for million-token reads, switch to Qwen for sandboxed execution, and still keep the "why" in Claude's head.
 
-## Skills
+**Concrete impact:**
+ - Faster turn-around on large, repetitive tasks
+ - Safer delegation with quota warnings before rate limits bite
+ - Consistent handoffs via shared skills and hooks
+ - Better continuity: usage logs and status reports keep teams aligned
 
-### Core Framework
+_— Claude Code, November 24, 2025_
 
-#### delegation-core
-Framework for intelligently delegating tasks to external LLM services.
+## Installation
 
-**When to Use:**
-- Before invoking any external LLM for task assistance
-- When facing token-heavy operations that exceed local context
-- When batch processing would benefit from different model characteristics
+### As a Claude Code plugin (recommended)
 
-**Delegation Flow:**
-1. `delegation-core:task-assessed`: Assess the task for delegation suitability.
-2. `delegation-core:delegation-suitability`: Determine if delegation to an external LLM is appropriate.
-3. `delegation-core:handoff-planned`: Plan the handoff to the external LLM.
-4. `delegation-core:results-integrated`: Integrate results from the external LLM.
+The plugin wires in skills, hooks, and delegation tooling automatically.
 
-### Service-Specific Implementations
-
-#### gemini-delegation
-Gemini CLI-specific delegation with quota tracking and authentication.
-
-**When to Use:**
-- After `delegation-core` determines Gemini is suitable
-- When you need Gemini's large context window (1M+ tokens)
-- For batch processing, summarization, or pattern extraction
-
-**Delegation Flow:**
-1. `gemini-delegation:auth-verified`: Verify authentication for Gemini.
-2. `gemini-delegation:quota-checked`: Check Gemini API quota.
-3. `gemini-delegation:command-executed`: Execute the command via Gemini.
-4. `gemini-delegation:usage-logged`: Log Gemini API usage.
-
-#### qwen-delegation
-Qwen MCP-specific delegation leveraging massive context and sandbox capabilities.
-
-**When to Use:**
-- After `delegation-core` determines Qwen is suitable
-- When you need Qwen's massive context window
-- For sandbox code execution in isolated environment
-
-**Delegation Flow:**
-1. `qwen-delegation:mcp-verified`: Verify Qwen MCP (Multi-Cloud Platform) access.
-2. `qwen-delegation:context-prepared`: Prepare context for Qwen.
-3. `qwen-delegation:request-executed`: Execute the request via Qwen.
-4. `qwen-delegation:output-reviewed`: Review Qwen's output.
-
-## Plugin Structure
-
+```bash
+/plugin install athola@claude-night-market
+/status
 ```
-conjure/
-├── plugin.json              # Plugin configuration
-├── README.md               # This file
-├── skills/
-│   ├── delegation-core/    # Core delegation framework
-│   ├── gemini-delegation/  # Gemini CLI specifics
-│   └── qwen-delegation/    # Qwen MCP specifics
-├── hooks/
-│   └── gemini/             # Gemini-specific hooks
-│       ├── bridge.on_tool_start
-│       └── bridge.after_tool_use
-├── tools/
-│   ├── quota_tracker.py    # Quota monitoring
-│   └── usage_logger.py     # Usage logging
-└── bin/
-    └── status.sh           # Quick status check
+
+### Development setup
+
+```bash
+uv sync             # install deps (or: make deps)
+make install-hooks  # pre-commit hooks
+make test           # lint + type + security checks
 ```
+
+Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ## Usage
 
+### Quick Start
+
 ```bash
-# Core delegation assessment
-Skill(conjure:delegation-core)
+# Check delegation readiness (auth + CLI availability)
+make delegate-verify
 
-# Service-specific workflows
-Skill(conjure:gemini-delegation)
-Skill(conjure:qwen-delegation)
+# Auto-pick best service for a task
+make delegate-auto PROMPT="Summarize src" FILES="src/"
 
-# Quick status check
-~/conjure/bin/status.sh
+# Monitor limits and usage
+make quota-status
+make usage-report
 ```
 
-## Decision Matrix
+### Delegation Executor
 
-| Intelligence | Context | Recommendation |
-|-------------|---------|----------------|
-| High | Any | Keep local (Claude) |
-| Low | Large | Delegate |
-| Low | Small | Either (prefer local) |
+```bash
+# List services
+uv run python tools/delegation_executor.py --list-services
 
-## What to Delegate
+# Verify a service
+uv run python tools/delegation_executor.py --verify gemini
 
-**Good for Delegation:**
-- Pattern counting, bulk extraction
-- Boilerplate generation
-- Large-file summarization
-- Repetitive transformations
-- Multi-file comparisons
+# Auto-select based on requirements
+uv run python tools/delegation_executor.py auto "Analyze this code" \
+  --files src/ --requirement large_context
 
-**Keep Local:**
-- Architecture analysis
-- Design decisions
-- Trade-off evaluation
-- Nuanced code review
-- Creative problem solving
+# Force a specific service
+uv run python tools/delegation_executor.py gemini "Summarize" \
+  --files docs/*.md --model gemini-2.0-pro-exp
+```
 
-## Dependencies
+### Make Commands
 
-None (foundational plugin)
+```bash
+# Development
+make format          # ruff format + check --fix
+make lint            # ruff check
+make typecheck       # mypy + ty
+make security-check  # bandit
+make test            # lint + type + security bundle
+make validate-all    # full validation including hooks
+make clean           # remove caches/venv
+
+# Delegation lifecycle
+make delegate-status
+make delegate-verify
+make delegate-usage
+make delegate-test
+make delegate-gemini PROMPT="Analyze" FILES="src/main.py"
+make delegate-qwen   PROMPT="Extract" FILES="src/**/*.py"
+make delegate-auto   PROMPT="Best service" FILES="src/"
+
+# Quota & usage
+make quota-status
+make usage-report
+```
+
+### Quota & Usage Tools
+
+```bash
+# Quota tracker (Gemini)
+uv run python tools/quota_tracker.py --status
+uv run python tools/quota_tracker.py --estimate src/ docs/
+uv run python tools/quota_tracker.py --validate-config
+
+# Usage logger (Gemini)
+uv run python tools/usage_logger.py --report
+uv run python tools/usage_logger.py --validate
+uv run python tools/usage_logger.py --status
+```
+
+### In Claude Code
+
+Use skills directly in chat:
+
+```
+Skill(conjure:delegation-core)
+Skill(conjure:gemini-delegation)
+Skill(conjure:qwen-delegation)
+```
+
+Hooks (`bridge.on_tool_start`, `bridge.after_tool_use`) surface delegation suggestions when tasks grow large or noisy.
+
+## Commands
+
+### `delegate-auto`
+
+Auto-selects the best external service based on requirements (e.g., large context vs. sandbox execution).
+
+### `delegate-gemini` / `delegate-qwen`
+
+Force a specific service with optional file globs and model hints.
+
+### `quota-status`
+
+Shows current Gemini quota usage with warnings for approaching per-minute or daily limits.
+
+### `usage-report`
+
+Summarizes recent Gemini requests, token counts, and success rate from `~/.claude/hooks/gemini/logs/usage.jsonl`.
+
+### `validate-delegation`
+
+Checks configuration integrity for delegation limits and paths.
+
+## Architecture
+
+- **Claude Code plugin** – Registers skills, commands, and Gemini hooks.
+- **Skills** – `delegation-core`, `gemini-delegation`, `qwen-delegation` for assessment and execution paths.
+- **Delegation executor** – `tools/delegation_executor.py` provides unified command construction, verification, and execution with token estimation.
+- **Quota tracker** – `tools/quota_tracker.py` monitors rate/daily limits with warnings.
+- **Usage logger** – `tools/usage_logger.py` records requests, tokens, success, and duration with session rollups.
+- **Hooks** – `hooks/gemini/bridge.*` recommend delegation when tool output size or volume suggests it.
+- **Makefile** – Single entry point for dev, validation, and delegation workflows.
+
+## How It Works
+
+1. **Assess** – `delegation-core` evaluates if a task should delegate based on size, repetition, or sandbox needs.
+2. **Select** – `delegate-auto` picks Gemini (large context) or Qwen (sandbox/CLI) using service metadata and requirements.
+3. **Execute** – `delegation_executor` builds and runs service-specific commands, capturing stdout/stderr, timing, and estimated tokens.
+4. **Monitor** – `quota_tracker` warns on rate/daily limits; `usage_logger` logs outcomes for reports.
+5. **Integrate** – Results return to Claude for review, edits, and next actions.
+
+## Configuration & Paths
+
+- Delegation config overrides: `~/.claude/hooks/delegation/config.json`
+- Quota data: `~/.claude/hooks/gemini/usage.json`
+- Usage logs: `~/.claude/hooks/gemini/logs/usage.jsonl`
+- Make targets reference `uv` for dependency management; adjust limits via `DEFAULT_LIMITS` in `tools/quota_tracker.py`.
+
+## Development
+
+```bash
+uv sync
+make lint typecheck security-check
+make test
+```
+
+See `CHANGELOG.md` for release notes (current: 1.1.0) and `LICENSE` (MIT).
 
 ## License
 
-MIT License
+MIT

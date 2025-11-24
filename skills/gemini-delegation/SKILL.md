@@ -74,9 +74,9 @@ python3 ~/conjure/tools/quota_tracker.py
 ```
 
 **Quota Thresholds:**
-- ✅ Healthy: Less than 80% usage.
-- ⚠️ Warning: 80-95% usage.
-- 🚨 Critical: Over 95% usage (defer non-urgent tasks).
+- [OK] Healthy: Less than 80% usage.
+- [WARNING] Warning: 80-95% usage.
+- [CRITICAL] Critical: Over 95% usage (defer non-urgent tasks).
 
 If quota is critical, consider:
 - Waiting for rate limit reset (1 minute for RPM).
